@@ -235,9 +235,6 @@ gpu-allocator = { workspace = true, optional = true }
 ash = { workspace = true, optional = true }
 gpu-descriptor = { workspace = true, optional = true }
 smallvec = { workspace = true, optional = true, features = ["union"] }
-# Backend: GLES
-khronos-egl = { workspace = true, features = ["dynamic"], optional = true }
-libloading = { workspace = true, optional = true }
 renderdoc-sys = { workspace = true, optional = true }
 
 ##########################
@@ -247,7 +244,8 @@ renderdoc-sys = { workspace = true, optional = true }
 [target.'cfg(unix)'.dependencies]
 # Backend: Vulkan
 libc = { workspace = true, optional = true }
-# backend: GLES
+# backend: GLES requires Wayland only on platforms that implement it.
+[target.'cfg(all(unix, not(target_os = "aros")))'.dependencies]
 wayland-sys = { version = "0.31.3", features = [
     "client",
     "dlopen",
@@ -353,3 +351,11 @@ winit.workspace = true                                           # for "halmark"
 [target.'cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "visionos", target_env = "ohos")))'.dev-dependencies]
 glutin-winit = { workspace = true, features = ["egl", "wgl", "wayland", "x11"] }
 glutin = { workspace = true, features = ["egl", "wgl", "wayland", "x11"] }
+
+# Native AROS EGL entry stubs; other native platforms retain dynamic EGL.
+[target.'cfg(all(not(target_family = "wasm"), not(target_os = "aros")))'.dependencies]
+khronos-egl = { workspace = true, features = ["dynamic"], optional = true }
+libloading = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "aros")'.dependencies]
+khronos-egl = { workspace = true, features = ["static", "no-pkg-config"], optional = true }

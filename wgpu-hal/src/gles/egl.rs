@@ -23,10 +23,10 @@ const EGL_PLATFORM_SURFACELESS_MESA: u32 = 0x31DD;
 const EGL_GL_COLORSPACE_KHR: u32 = 0x309D;
 const EGL_GL_COLORSPACE_SRGB_KHR: u32 = 0x3089;
 
-#[cfg(not(Emscripten))]
+#[cfg(not(static_egl))]
 type EglInstance = khronos_egl::DynamicInstance<khronos_egl::EGL1_4>;
 
-#[cfg(Emscripten)]
+#[cfg(static_egl)]
 type EglInstance = khronos_egl::Instance<khronos_egl::Static>;
 
 type EglLabel = *const ffi::c_void;
@@ -124,9 +124,18 @@ fn choose_config(
         log::debug!("\tTrying {name}");
 
         attributes.clear();
+        let mut surface_type = 0;
         for &(_, tier_attr) in tiers[..=tier_max].iter() {
-            attributes.extend_from_slice(tier_attr);
+            for attribute in tier_attr.chunks_exact(2) {
+                if attribute[0] == khronos_egl::SURFACE_TYPE {
+                    surface_type |= attribute[1];
+                } else {
+                    attributes.extend_from_slice(attribute);
+                }
+            }
         }
+        // Duplicate EGL attribute keys are undefined and make Mesa return no configs.
+        attributes.extend_from_slice(&[khronos_egl::SURFACE_TYPE, surface_type]);
         // make sure the Alpha is enough to support sRGB
         match srgb_kind {
             SrgbFrameBufferKind::None => {}
@@ -144,13 +153,18 @@ fn choose_config(
                     // but also on Angle.
                     log::info!("EGL says it can present to the window but not natively",);
                 }
-                // Android emulator can't natively present either.
-                let tier_threshold =
-                    if cfg!(target_os = "android") || cfg!(windows) || cfg!(target_env = "ohos") {
-                        1
-                    } else {
-                        2
-                    };
+                // AROS presents through EGL_WINDOW_BIT. NATIVE_RENDERABLE
+                // describes interoperability with non-EGL native drawing, not
+                // the ability to present an Intuition EGL window surface.
+                // Android emulators, Windows and OHOS also accept tier 1.
+                let tier_threshold = if cfg!(any(target_os = "android", target_os = "aros"))
+                    || cfg!(windows)
+                    || cfg!(target_env = "ohos")
+                {
+                    1
+                } else {
+                    2
+                };
                 return Ok((config, tier_max >= tier_threshold));
             }
             Ok(None) => {
@@ -432,7 +446,8 @@ impl Inner {
             egl.get_configs(display, &mut configurations)
                 .map_err(instance_err("failed to get configs"))?;
             for &config in configurations.iter() {
-                log::trace!("\tCONFORMANT=0x{:X?}, RENDERABLE=0x{:X?}, NATIVE_RENDERABLE=0x{:X?}, SURFACE_TYPE=0x{:X?}, ALPHA_SIZE={:?}",
+                log::trace!(
+                    "\tCONFORMANT=0x{:X?}, RENDERABLE=0x{:X?}, NATIVE_RENDERABLE=0x{:X?}, SURFACE_TYPE=0x{:X?}, ALPHA_SIZE={:?}",
                     egl.get_config_attrib(display, config, khronos_egl::CONFORMANT),
                     egl.get_config_attrib(display, config, khronos_egl::RENDERABLE_TYPE),
                     egl.get_config_attrib(display, config, khronos_egl::NATIVE_RENDERABLE),
@@ -717,11 +732,11 @@ impl crate::Instance for Instance {
         use raw_window_handle::RawDisplayHandle as Rdh;
 
         profiling::scope!("Init OpenGL (EGL) Backend");
-        #[cfg(Emscripten)]
+        #[cfg(static_egl)]
         let egl_result: Result<EglInstance, khronos_egl::Error> =
             Ok(khronos_egl::Instance::new(khronos_egl::Static));
 
-        #[cfg(not(Emscripten))]
+        #[cfg(not(static_egl))]
         let egl_result = if cfg!(windows) {
             unsafe {
                 khronos_egl::DynamicInstance::<khronos_egl::EGL1_4>::load_required_from_filename(
@@ -752,12 +767,26 @@ impl crate::Instance for Instance {
             client_ext_str.split_whitespace().collect::<Vec<_>>()
         );
 
-        #[cfg(not(Emscripten))]
+        #[cfg(not(static_egl))]
         let egl1_5 = egl.upcast::<khronos_egl::EGL1_5>();
 
-        #[cfg(Emscripten)]
+        #[cfg(all(static_egl, not(target_os = "aros")))]
         let egl1_5: Option<&Arc<EglInstance>> = Some(&egl);
 
+        #[cfg(target_os = "aros")]
+        let (display, wsi_kind) = {
+            if !matches!(desc.display.map(|d| d.as_raw()), Some(Rdh::Aros(_)) | None) {
+                return Err(crate::InstanceError::new(
+                    "Expected an AROS Intuition display".into(),
+                ));
+            }
+            // egl.library exposes the EGL1.4 native-window API. Do not link
+            // EGL1.5 platform entry points merely because Static binds them.
+            let display = unsafe { egl.get_display(khronos_egl::DEFAULT_DISPLAY) }
+                .ok_or_else(|| crate::InstanceError::new("Failed to get AROS display".into()))?;
+            (display, WindowKind::Unknown)
+        };
+        #[cfg(not(target_os = "aros"))]
         let (display, wsi_kind) = match (desc.display.map(|d| d.as_raw()), egl1_5) {
             (Some(Rdh::Wayland(wayland_display_handle)), Some(egl))
                 if client_ext_str.contains("EGL_EXT_platform_wayland") =>
@@ -918,6 +947,8 @@ impl crate::Instance for Instance {
         let inner = self.inner.lock();
 
         match (window_handle, display_handle) {
+            #[cfg(target_os = "aros")]
+            (Rwh::Aros(_), raw_window_handle::RawDisplayHandle::Aros(_)) => {}
             (Rwh::Xlib(_), _) => {}
             (Rwh::Xcb(_), _) => {}
             (Rwh::Win32(_), _) => {}
@@ -1073,7 +1104,7 @@ impl super::Device {
 #[derive(Debug)]
 pub struct Swapchain {
     surface: khronos_egl::Surface,
-    wl_window: Option<*mut wayland_sys::egl::wl_egl_window>,
+    wl_window: Option<*mut ffi::c_void>,
     framebuffer: glow::Framebuffer,
     renderbuffer: glow::Renderbuffer,
     /// Extent because the window lies
@@ -1181,10 +1212,7 @@ impl Surface {
     unsafe fn unconfigure_impl(
         &self,
         device: &super::Device,
-    ) -> Option<(
-        khronos_egl::Surface,
-        Option<*mut wayland_sys::egl::wl_egl_window>,
-    )> {
+    ) -> Option<(khronos_egl::Surface, Option<*mut ffi::c_void>)> {
         let gl = &device.shared.context.lock();
         match self.swapchain.write().take() {
             Some(sc) => {
@@ -1216,11 +1244,12 @@ impl crate::Surface for Surface {
 
         let (surface, wl_window) = match unsafe { self.unconfigure_impl(device) } {
             Some((sc, wl_window)) => {
+                #[cfg(all(unix, not(target_os = "aros")))]
                 if let Some(window) = wl_window {
                     wayland_sys::ffi_dispatch!(
                         wayland_sys::egl::wayland_egl_handle(),
                         wl_egl_window_resize,
-                        window,
+                        window.cast(),
                         config.extent.width as i32,
                         config.extent.height as i32,
                         0,
@@ -1234,6 +1263,8 @@ impl crate::Surface for Surface {
                 let mut wl_window = None;
                 let (mut temp_xlib_handle, mut temp_xcb_handle);
                 let native_window_ptr = match (self.wsi.kind, self.raw_window_handle) {
+                    #[cfg(target_os = "aros")]
+                    (WindowKind::Unknown, Rwh::Aros(handle)) => handle.window.as_ptr(),
                     (WindowKind::Unknown | WindowKind::X11, Rwh::Xlib(handle)) => {
                         temp_xlib_handle = handle.window;
                         ptr::from_mut(&mut temp_xlib_handle).cast::<ffi::c_void>()
@@ -1250,7 +1281,7 @@ impl crate::Surface for Surface {
                         handle.a_native_window.as_ptr()
                     }
                     (WindowKind::Unknown, Rwh::OhosNdk(handle)) => handle.native_window.as_ptr(),
-                    #[cfg(unix)]
+                    #[cfg(all(unix, not(target_os = "aros")))]
                     (WindowKind::Wayland, Rwh::Wayland(handle)) => {
                         let window = wayland_sys::ffi_dispatch!(
                             wayland_sys::egl::wayland_egl_handle(),
@@ -1259,7 +1290,7 @@ impl crate::Surface for Surface {
                             config.extent.width as i32,
                             config.extent.height as i32,
                         );
-                        wl_window = Some(window);
+                        wl_window = Some(window.cast());
                         window.cast()
                     }
                     #[cfg(Emscripten)]
@@ -1297,6 +1328,7 @@ impl crate::Surface for Surface {
                     // manage a swapchain on our side.
                     // Some drivers just fail on surface creation seeing `EGL_SINGLE_BUFFER`.
                     if cfg!(any(
+                        target_os = "aros",
                         target_os = "android",
                         target_os = "macos",
                         target_env = "ohos"
@@ -1323,13 +1355,23 @@ impl crate::Surface for Surface {
                 }
                 attributes.push(khronos_egl::ATTRIB_NONE as i32);
 
-                #[cfg(not(Emscripten))]
+                #[cfg(not(static_egl))]
                 let egl1_5 = self.egl.instance.upcast::<khronos_egl::EGL1_5>();
 
-                #[cfg(Emscripten)]
+                #[cfg(all(static_egl, not(target_os = "aros")))]
                 let egl1_5: Option<&Arc<EglInstance>> = Some(&self.egl.instance);
 
                 // Careful, we can still be in 1.4 version even if `upcast` succeeds
+                #[cfg(target_os = "aros")]
+                let raw_result = unsafe {
+                    self.egl.instance.create_window_surface(
+                        self.egl.display,
+                        self.config,
+                        native_window_ptr,
+                        Some(&attributes),
+                    )
+                };
+                #[cfg(not(target_os = "aros"))]
                 let raw_result = match egl1_5 {
                     Some(egl) if self.wsi.kind != WindowKind::Unknown => {
                         let attributes_usize = attributes
@@ -1417,11 +1459,12 @@ impl crate::Surface for Surface {
                 .instance
                 .destroy_surface(self.egl.display, surface)
                 .unwrap();
+            #[cfg(all(unix, not(target_os = "aros")))]
             if let Some(window) = wl_window {
                 wayland_sys::ffi_dispatch!(
                     wayland_sys::egl::wayland_egl_handle(),
                     wl_egl_window_destroy,
-                    window,
+                    window.cast(),
                 );
             }
         }

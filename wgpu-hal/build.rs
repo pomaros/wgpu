@@ -1,4 +1,5 @@
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(target_os, values(\"aros\"))");
     cfg_aliases::cfg_aliases! {
         native: { not(target_arch = "wasm32") },
         send_sync: { any(
@@ -7,6 +8,7 @@ fn main() {
         ) },
         webgl: { all(target_arch = "wasm32", not(target_os = "emscripten"), gles) },
         Emscripten: { all(target_os = "emscripten", gles) },
+        static_egl: { all(gles, any(target_os = "emscripten", target_os = "aros")) },
         dx12: { all(target_os = "windows", feature = "dx12") },
         gles: { all(feature = "gles") },
         // Within the GL ES backend, use `std` and be Send + Sync only if we are using a target

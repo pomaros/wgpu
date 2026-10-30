@@ -70,6 +70,7 @@ version = "29.0.4"
 authors = ["gfx-rs developers"]
 
 [workspace.dependencies]
+wgpu-core-deps-aros = { version = "29.0.4", path = "./wgpu-core/platform-deps/aros" }
 naga = { version = "29.0.1", path = "./naga" }
 naga-test = { path = "./naga-test" }
 wgpu = { version = "29.0.1", path = "./wgpu", default-features = false, features = [
@@ -320,6 +321,7 @@ ndk-sys = "0.6"
 # These overrides allow our examples to explicitly depend on release crates
 [patch.crates-io]
 wgpu = { path = "./wgpu" }
+raw-window-handle = { git = "https://github.com/pomaros/raw-window-handle", rev = "39372f35bbd84db1c1e8941a2e73f798ad2c0be2" }
 
 env_logger = { version = "0.11", git = "https://github.com/rust-cli/env_logger.git", rev = "d550741" }
 libtest-mimic = { version = "0.8", git = "https://github.com/cwfitzgerald/libtest-mimic.git", rev = "9979b3c" }

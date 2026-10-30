@@ -1,4 +1,5 @@
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(target_os, values(\"aros\"))");
     cfg_aliases::cfg_aliases! {
         windows_linux_android: { any(windows, target_os = "linux", target_os = "android", target_os = "freebsd") },
         send_sync: { all(
@@ -11,6 +12,7 @@ fn main() {
         dx12: { all(target_os = "windows", feature = "dx12") },
         webgl: { all(target_arch = "wasm32", not(target_os = "emscripten"), feature = "webgl") },
         gles: { any(
+            all(target_os = "aros", feature = "gles"),
             all(windows_linux_android, feature = "gles"), // Regular GLES
             all(webgl), // WebGL
             all(target_os = "emscripten", feature = "gles"), // Emscripten GLES
