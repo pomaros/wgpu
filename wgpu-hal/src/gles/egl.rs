@@ -767,16 +767,21 @@ impl crate::Instance for Instance {
         #[cfg(static_egl)]
         let egl1_5: Option<&Arc<EglInstance>> = Some(&egl);
 
-        let (display, wsi_kind) = match (desc.display.map(|d| d.as_raw()), egl1_5) {
-            #[cfg(target_os = "aros")]
-            (Some(Rdh::Aros(_)), _) => {
-                // Intuition uses the native EGL display, not an X11/Wayland platform.
-                let display =
-                    unsafe { egl.get_display(khronos_egl::DEFAULT_DISPLAY) }.ok_or_else(|| {
-                        crate::InstanceError::new("Failed to get AROS display".into())
-                    })?;
-                (display, WindowKind::Unknown)
+        #[cfg(target_os = "aros")]
+        let (display, wsi_kind) = {
+            if !matches!(desc.display.map(|d| d.as_raw()), Some(Rdh::Aros(_)) | None) {
+                return Err(crate::InstanceError::new(
+                    "Expected an AROS Intuition display".into(),
+                ));
             }
+            // egl.library exposes the EGL1.4 native-window API. Do not link
+            // EGL1.5 platform entry points merely because Static binds them.
+            let display = unsafe { egl.get_display(khronos_egl::DEFAULT_DISPLAY) }
+                .ok_or_else(|| crate::InstanceError::new("Failed to get AROS display".into()))?;
+            (display, WindowKind::Unknown)
+        };
+        #[cfg(not(target_os = "aros"))]
+        let (display, wsi_kind) = match (desc.display.map(|d| d.as_raw()), egl1_5) {
             (Some(Rdh::Windows(_)) | None, Some(egl))
                 if cfg!(windows)
                     && client_ext_str.contains("EGL_ANGLE_platform_angle")
@@ -1380,6 +1385,16 @@ impl crate::Surface for Surface {
                 let egl1_5: Option<&Arc<EglInstance>> = Some(&self.egl.instance);
 
                 // Careful, we can still be in 1.4 version even if `upcast` succeeds
+                #[cfg(target_os = "aros")]
+                let raw_result = unsafe {
+                    self.egl.instance.create_window_surface(
+                        self.egl.display,
+                        self.config,
+                        native_window_ptr,
+                        Some(&attributes),
+                    )
+                };
+                #[cfg(not(target_os = "aros"))]
                 let raw_result = match egl1_5 {
                     Some(egl) if self.wsi.kind != WindowKind::Unknown => {
                         let attributes_usize = attributes
