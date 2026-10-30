@@ -175,3 +175,6 @@ pub mod webgpu {
 
 #[doc(hidden)]
 pub use macros::helpers as __macro_helpers;
+
+#[cfg(all(target_os = "aros", feature = "gles", not(gles)))]
+compile_error!("AROS GLES feature must select an implemented backend");

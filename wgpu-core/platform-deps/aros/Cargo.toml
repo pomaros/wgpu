@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 John Knipper
+[package]
+name = "wgpu-core-deps-aros"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Native AROS backend feature selection"
+
+[features]
+gles = ["wgpu-hal/gles"]
+
+[target.'cfg(target_os = "aros")'.dependencies]
+wgpu-hal = { workspace = true, default-features = true }
+
+[lints]
+workspace = true

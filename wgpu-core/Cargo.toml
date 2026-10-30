@@ -139,6 +139,7 @@ vulkan = [
 ]
 ## OpenGL backend, only available on Windows, Linux, Android, and Emscripten
 gles = [
+    "wgpu-core-deps-aros/gles",
     "wgpu-core-deps-linux-android-bsd/gles",
     "wgpu-core-deps-windows/gles",
     "wgpu-core-deps-emscripten/gles",
@@ -214,3 +215,6 @@ proptest.workspace = true
 
 [build-dependencies]
 cfg_aliases.workspace = true
+
+[target.'cfg(target_os = "aros")'.dependencies]
+wgpu-core-deps-aros = { workspace = true, optional = true }

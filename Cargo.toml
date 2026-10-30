@@ -80,6 +80,7 @@ repository = "https://github.com/gfx-rs/wgpu"
 version = "30.0.0"
 
 [workspace.dependencies]
+wgpu-core-deps-aros = { version = "30.0.0", path = "./wgpu-core/platform-deps/aros" }
 naga = { version = "30.0.0", path = "./naga" }
 naga-test = { path = "./naga-test" }
 naga-types = { version = "30.0.0", path = "./naga-types" }
