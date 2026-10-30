@@ -152,13 +152,18 @@ fn choose_config(
                     // but also on Angle.
                     log::info!("EGL says it can present to the window but not natively",);
                 }
-                // Android emulator can't natively present either.
-                let tier_threshold =
-                    if cfg!(target_os = "android") || cfg!(windows) || cfg!(target_env = "ohos") {
-                        1
-                    } else {
-                        2
-                    };
+                // AROS presents through EGL_WINDOW_BIT. NATIVE_RENDERABLE
+                // describes interoperability with non-EGL native drawing, not
+                // the ability to present an Intuition EGL window surface.
+                // Android emulators, Windows and OHOS also accept tier 1.
+                let tier_threshold = if cfg!(any(target_os = "android", target_os = "aros"))
+                    || cfg!(windows)
+                    || cfg!(target_env = "ohos")
+                {
+                    1
+                } else {
+                    2
+                };
                 return Ok((config, tier_max >= tier_threshold));
             }
             Ok(None) => {
