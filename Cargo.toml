@@ -339,7 +339,7 @@ ndk-sys = "0.6"
 # These overrides allow our examples to explicitly depend on release crates
 [patch.crates-io]
 wgpu = { path = "./wgpu" }
-raw-window-handle = { path = "../raw-window-handle-aros" }
+raw-window-handle = { git = "https://github.com/pomaros/raw-window-handle", rev = "39372f35bbd84db1c1e8941a2e73f798ad2c0be2" }
 
 [profile.release]
 lto = "thin"

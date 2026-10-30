@@ -2,8 +2,8 @@
 
 This branch starts at upstream WGPU 3b3506ea31154edc04de64debda0e780cba2639c
 (version 30.0.0) and provides an explicit Intuition window path for GLES.
-It uses ArosWindowHandle/ArosDisplayHandle from the sibling
-raw-window-handle-aros fork, based on raw-window-handle 0.6.2.
+It uses ArosWindowHandle/ArosDisplayHandle from the
+[pomaros/raw-window-handle](https://github.com/pomaros/raw-window-handle) fork, based on raw-window-handle 0.6.2.
 
 AROS EGL entry points link through libEGL.a to egl.library. No Unix shared
 object loader or Wayland service is required. The native window is an actual
