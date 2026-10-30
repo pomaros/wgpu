@@ -22,10 +22,10 @@ const EGL_PLATFORM_SURFACELESS_MESA: u32 = 0x31DD;
 const EGL_GL_COLORSPACE_KHR: u32 = 0x309D;
 const EGL_GL_COLORSPACE_SRGB_KHR: u32 = 0x3089;
 
-#[cfg(not(Emscripten))]
+#[cfg(not(static_egl))]
 type EglInstance = khronos_egl::DynamicInstance<khronos_egl::EGL1_4>;
 
-#[cfg(Emscripten)]
+#[cfg(static_egl)]
 type EglInstance = khronos_egl::Instance<khronos_egl::Static>;
 
 type EglLabel = *const ffi::c_void;
@@ -446,7 +446,8 @@ impl Inner {
             egl.get_configs(display, &mut configurations)
                 .map_err(instance_err("failed to get configs"))?;
             for &config in configurations.iter() {
-                log::trace!("\tCONFORMANT=0x{:X?}, RENDERABLE=0x{:X?}, NATIVE_RENDERABLE=0x{:X?}, SURFACE_TYPE=0x{:X?}, ALPHA_SIZE={:?}",
+                log::trace!(
+                    "\tCONFORMANT=0x{:X?}, RENDERABLE=0x{:X?}, NATIVE_RENDERABLE=0x{:X?}, SURFACE_TYPE=0x{:X?}, ALPHA_SIZE={:?}",
                     egl.get_config_attrib(display, config, khronos_egl::CONFORMANT),
                     egl.get_config_attrib(display, config, khronos_egl::RENDERABLE_TYPE),
                     egl.get_config_attrib(display, config, khronos_egl::NATIVE_RENDERABLE),
@@ -725,11 +726,11 @@ impl crate::Instance for Instance {
         use raw_window_handle::RawDisplayHandle as Rdh;
 
         profiling::scope!("Init OpenGL (EGL) Backend");
-        #[cfg(Emscripten)]
+        #[cfg(static_egl)]
         let egl_result: Result<EglInstance, khronos_egl::Error> =
             Ok(khronos_egl::Instance::new(khronos_egl::Static));
 
-        #[cfg(not(Emscripten))]
+        #[cfg(not(static_egl))]
         let egl_result = if cfg!(windows) {
             unsafe {
                 khronos_egl::DynamicInstance::<khronos_egl::EGL1_4>::load_required_from_filename(
@@ -760,13 +761,22 @@ impl crate::Instance for Instance {
             client_ext_str.split_whitespace().collect::<Vec<_>>()
         );
 
-        #[cfg(not(Emscripten))]
+        #[cfg(not(static_egl))]
         let egl1_5 = egl.upcast::<khronos_egl::EGL1_5>();
 
-        #[cfg(Emscripten)]
+        #[cfg(static_egl)]
         let egl1_5: Option<&Arc<EglInstance>> = Some(&egl);
 
         let (display, wsi_kind) = match (desc.display.map(|d| d.as_raw()), egl1_5) {
+            #[cfg(target_os = "aros")]
+            (Some(Rdh::Aros(_)), _) => {
+                // Intuition uses the native EGL display, not an X11/Wayland platform.
+                let display =
+                    unsafe { egl.get_display(khronos_egl::DEFAULT_DISPLAY) }.ok_or_else(|| {
+                        crate::InstanceError::new("Failed to get AROS display".into())
+                    })?;
+                (display, WindowKind::Unknown)
+            }
             (Some(Rdh::Windows(_)) | None, Some(egl))
                 if cfg!(windows)
                     && client_ext_str.contains("EGL_ANGLE_platform_angle")
@@ -953,6 +963,8 @@ impl crate::Instance for Instance {
         let inner = self.inner.lock();
 
         match (window_handle, display_handle) {
+            #[cfg(target_os = "aros")]
+            (Rwh::Aros(_), raw_window_handle::RawDisplayHandle::Aros(_)) => {}
             (Rwh::Xlib(_), _) => {}
             (Rwh::Xcb(_), _) => {}
             (Rwh::Win32(_), _) => {}
@@ -1249,7 +1261,7 @@ impl crate::Surface for Surface {
 
         let (surface, wl_window) = match unsafe { self.unconfigure_impl(device) } {
             Some((sc, wl_window)) => {
-                #[cfg(unix)]
+                #[cfg(all(unix, not(target_os = "aros")))]
                 if let Some(window) = wl_window {
                     wayland_sys::ffi_dispatch!(
                         wayland_sys::egl::wayland_egl_handle(),
@@ -1269,6 +1281,8 @@ impl crate::Surface for Surface {
                 let mut wl_window = None;
                 let (mut temp_xlib_handle, mut temp_xcb_handle);
                 let native_window_ptr = match (self.wsi.kind, self.raw_window_handle) {
+                    #[cfg(target_os = "aros")]
+                    (WindowKind::Unknown, Rwh::Aros(handle)) => handle.window.as_ptr(),
                     (WindowKind::Unknown | WindowKind::X11, Rwh::Xlib(handle)) => {
                         temp_xlib_handle = handle.window;
                         ptr::from_mut(&mut temp_xlib_handle).cast::<ffi::c_void>()
@@ -1285,7 +1299,7 @@ impl crate::Surface for Surface {
                         handle.a_native_window.as_ptr()
                     }
                     (WindowKind::Unknown, Rwh::OhosNdk(handle)) => handle.native_window.as_ptr(),
-                    #[cfg(unix)]
+                    #[cfg(all(unix, not(target_os = "aros")))]
                     (WindowKind::Wayland, Rwh::Wayland(handle)) => {
                         let window = wayland_sys::ffi_dispatch!(
                             wayland_sys::egl::wayland_egl_handle(),
@@ -1332,6 +1346,7 @@ impl crate::Surface for Surface {
                     // manage a swapchain on our side.
                     // Some drivers just fail on surface creation seeing `EGL_SINGLE_BUFFER`.
                     if cfg!(any(
+                        target_os = "aros",
                         target_os = "android",
                         target_os = "macos",
                         target_env = "ohos"
@@ -1358,10 +1373,10 @@ impl crate::Surface for Surface {
                 }
                 attributes.push(khronos_egl::ATTRIB_NONE as i32);
 
-                #[cfg(not(Emscripten))]
+                #[cfg(not(static_egl))]
                 let egl1_5 = self.egl.instance.upcast::<khronos_egl::EGL1_5>();
 
-                #[cfg(Emscripten)]
+                #[cfg(static_egl)]
                 let egl1_5: Option<&Arc<EglInstance>> = Some(&self.egl.instance);
 
                 // Careful, we can still be in 1.4 version even if `upcast` succeeds
@@ -1453,7 +1468,7 @@ impl crate::Surface for Surface {
                 .destroy_surface(self.egl.display, surface)
                 .unwrap();
             if let Some(_window) = wl_window {
-                #[cfg(unix)]
+                #[cfg(all(unix, not(target_os = "aros")))]
                 wayland_sys::ffi_dispatch!(
                     wayland_sys::egl::wayland_egl_handle(),
                     wl_egl_window_destroy,

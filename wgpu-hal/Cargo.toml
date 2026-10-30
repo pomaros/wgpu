@@ -241,9 +241,6 @@ gpu-allocator = { workspace = true, optional = true }
 # Backend: Vulkan
 ash = { workspace = true, optional = true }
 smallvec = { workspace = true, optional = true, features = ["union"] }
-# Backend: GLES
-khronos-egl = { workspace = true, features = ["dynamic"], optional = true }
-libloading = { workspace = true, optional = true }
 renderdoc-sys = { workspace = true, optional = true }
 
 ##########################
@@ -253,7 +250,8 @@ renderdoc-sys = { workspace = true, optional = true }
 [target.'cfg(unix)'.dependencies]
 # Backend: Vulkan
 libc = { workspace = true, optional = true }
-# backend: GLES
+# backend: GLES requires Wayland only on platforms that implement it.
+[target.'cfg(all(unix, not(target_os = "aros")))'.dependencies]
 wayland-sys = { version = "0.31.3", features = [
     "client",
     "dlopen",
@@ -356,3 +354,11 @@ env_logger.workspace = true
 glam.workspace = true # for ray-traced-triangle example
 naga = { workspace = true, features = ["wgsl-in", "termcolor"] }
 winit.workspace = true # for "halmark" example
+
+# AROS links EGL entry stubs to egl.library; it has no Unix shared-object loader.
+[target.'cfg(all(not(target_family = "wasm"), not(target_os = "aros")))'.dependencies]
+khronos-egl = { workspace = true, features = ["dynamic"], optional = true }
+libloading = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "aros")'.dependencies]
+khronos-egl = { workspace = true, features = ["static", "no-pkg-config"], optional = true }
